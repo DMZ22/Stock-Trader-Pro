@@ -9,9 +9,47 @@ from apps.market.providers.base import ProviderError, DataNotFoundError
 from apps.market.indicators import add_indicators
 from apps.market.assets import ASSET_CATEGORIES, find_symbol
 from apps.signals.scalper import detect_scalp, backtest_signals
+from apps.signals.forecast import project_trajectory, expected_move_over_horizon
+from apps.signals.patterns import classify_regime
+from apps.signals.scanner import scan_symbols
+from apps.market.assets import ASSET_CATEGORIES
+
+# Default scan universes
+SCAN_UNIVERSES = {
+    "crypto_major": [s for _, s in ASSET_CATEGORIES.get("Major Crypto (USD)", [])][:16],
+    "crypto_usdt": [s for _, s in ASSET_CATEGORIES.get("Crypto USDT Pairs", [])][:12],
+    "crypto_all": ([s for _, s in ASSET_CATEGORIES.get("Major Crypto (USD)", [])] +
+                    [s for _, s in ASSET_CATEGORIES.get("Crypto DeFi & L1", [])][:12]),
+    "us_tech": [s for _, s in ASSET_CATEGORIES.get("US Tech", [])][:15],
+    "metals": [s for _, s in ASSET_CATEGORIES.get("Precious Metals & Miners", [])][:10],
+    "forex": [s for _, s in ASSET_CATEGORIES.get("Forex", [])][:10],
+    "indian": [s for _, s in ASSET_CATEGORIES.get("Indian NSE", [])][:15],
+}
 
 
 # Map low TF to higher TF for multi-timeframe confluence
+def _log_signal_if_authenticated(request, sig, interval):
+    """Save generated signal to user history (silent if not authenticated)."""
+    uid = request.session.get("uid")
+    if not uid:
+        return
+    try:
+        from apps.auth.models import UserProfile, SignalLog
+        user = UserProfile.objects.filter(uid=uid).first()
+        if not user:
+            return
+        SignalLog.objects.create(
+            user=user, symbol=sig.symbol, interval=interval,
+            direction=sig.direction, action=sig.action,
+            entry=sig.entry, stop_loss=sig.stop_loss, take_profit=sig.take_profit,
+            confidence=sig.confidence, risk_reward=sig.risk_reward,
+            regime=(sig.regime or {}).get("regime", ""),
+            htf_trend=sig.htf_trend or "",
+        )
+    except Exception as e:
+        logger.warning("Signal log failed (non-critical): %s", e)
+
+
 HTF_MAP = {
     "1m": ("15m", "5d"),
     "5m": ("1h", "1mo"),
@@ -56,11 +94,13 @@ def health_api(request):
         cache_ok = cache.get("health_ping") == "ok"
     except Exception:
         cache_ok = False
+    from apps.market.circuit_breaker import REGISTRY as CB
     return JsonResponse({
         "ok": True,
-        "version": "1.1.0",
+        "version": "1.2.0",
         "providers": checks,
         "provider_order": [p.name for p in svc.providers],
+        "circuit_breakers": CB.all_stats(),
         "cache": "ok" if cache_ok else "error",
         "firebase_configured": bool(__import__("django.conf").conf.settings.FIREBASE_CONFIG.get("API_KEY")),
     })
@@ -150,7 +190,13 @@ def scalp_api(request, symbol):
         sig = detect_scalp(df_ind, symbol.upper(),
                            account_size=account, risk_per_trade_pct=risk_pct,
                            htf_df=htf_ind)
-        return JsonResponse({"ok": True, "signal": sig.to_dict()})
+        # Expected move over 10-bar horizon (used for 2-5% move filter)
+        em = expected_move_over_horizon(df_ind, horizon_bars=10, interval=interval)
+        _log_signal_if_authenticated(request, sig, interval)
+        return JsonResponse({
+            "ok": True, "signal": sig.to_dict(),
+            "expected_move": em,
+        })
     except DataNotFoundError as e:
         return _error(str(e), 404)
     except ProviderError as e:
@@ -218,6 +264,56 @@ def analyze_api(request, symbol):
         return _error(str(e), 502)
     except Exception as e:
         logger.exception("analyze_api")
+        return _error(str(e), 500)
+
+
+@require_GET
+def scanner_api(request):
+    """Scan a universe of symbols in parallel, return ranked opportunities."""
+    universe = request.GET.get("universe", "crypto_major")
+    interval = request.GET.get("interval", "1h")
+    period = request.GET.get("period", "1mo")
+    min_conf = float(request.GET.get("min_confidence", 40))
+    symbols_csv = request.GET.get("symbols", "")
+    if symbols_csv:
+        symbols = [s.strip().upper() for s in symbols_csv.split(",") if s.strip()]
+    else:
+        symbols = SCAN_UNIVERSES.get(universe, SCAN_UNIVERSES["crypto_major"])
+    if not symbols:
+        return _error("No symbols to scan", 400)
+    try:
+        result = scan_symbols(symbols, interval=interval, period=period,
+                               min_confidence=min_conf, max_workers=8)
+        return JsonResponse(result)
+    except Exception as e:
+        logger.exception("scanner_api")
+        return _error(str(e), 500)
+
+
+@require_GET
+def forecast_api(request, symbol):
+    """Ghost-line trajectory forecast with confidence cones."""
+    interval = request.GET.get("interval", "1d")
+    period = request.GET.get("period", "6mo")
+    steps = int(request.GET.get("steps", 20))
+    lookback = int(request.GET.get("lookback", 30))
+    try:
+        df = get_market_service().get_candles(symbol, interval, period)
+        df_ind = add_indicators(df)
+        regime = classify_regime(df_ind).get("regime", "RANGING")
+        forecast = project_trajectory(df_ind, steps=steps, lookback=lookback,
+                                       interval=interval, regime=regime)
+        em = expected_move_over_horizon(df_ind, horizon_bars=steps, interval=interval)
+        return JsonResponse({
+            "ok": True, "symbol": symbol.upper(),
+            "forecast": forecast, "expected_move": em, "regime": regime,
+        })
+    except DataNotFoundError as e:
+        return _error(str(e), 404)
+    except ProviderError as e:
+        return _error(str(e), 502)
+    except Exception as e:
+        logger.exception("forecast_api")
         return _error(str(e), 500)
 
 

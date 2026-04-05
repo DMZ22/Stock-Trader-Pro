@@ -45,6 +45,15 @@ class CoinGeckoProvider(MarketDataProvider):
         "6mo": 180, "1y": 365, "2y": 730, "5y": 1825, "max": "max",
     }
 
+    # CoinGecko OHLC auto-resolution:
+    # days=1 → 30min candles; days=7-14 → 4h candles; days>=30 → 4d candles
+    # For intraday intervals we cap days to get finer resolution
+    INTERVAL_MAX_DAYS = {
+        "1m": 1, "5m": 1, "15m": 1, "30m": 1,
+        "1h": 14, "60m": 14, "4h": 14,
+        "1d": 90, "1wk": 365, "1mo": 365,
+    }
+
     def __init__(self, api_key=None):
         super().__init__(api_key)
         self.session = requests.Session()
@@ -56,13 +65,23 @@ class CoinGeckoProvider(MarketDataProvider):
 
     def _cg_id(self, symbol: str) -> str:
         s = symbol.upper().strip()
+        # Normalize USDT/USDC suffixes to USD lookup
+        for suffix in ("-USDT", "-USDC", "-BUSD", "/USDT", "/USD"):
+            if s.endswith(suffix):
+                s = s.replace(suffix, "-USD")
+                break
         if s in self.SYMBOL_MAP:
             return self.SYMBOL_MAP[s]
-        # Try lowercase of the base symbol
         if s.endswith("-USD"):
             base = s.replace("-USD", "").lower()
             return base
         return s.lower()
+
+    def _is_crypto_symbol(self, symbol: str) -> bool:
+        s = symbol.upper().strip()
+        if any(s.endswith(suf) for suf in ("-USD", "-USDT", "-USDC", "-BUSD", "/USDT", "/USD")):
+            return True
+        return s in self.SYMBOL_MAP
 
     def _request(self, endpoint: str, params: dict = None) -> dict:
         try:
@@ -76,7 +95,7 @@ class CoinGeckoProvider(MarketDataProvider):
             raise ProviderError(f"CoinGecko network error: {e}") from e
 
     def get_quote(self, symbol: str) -> Quote:
-        if not symbol.upper().endswith("-USD") and symbol.upper() not in self.SYMBOL_MAP:
+        if not self._is_crypto_symbol(symbol):
             raise DataNotFoundError(f"CoinGecko: {symbol} is not a crypto pair")
         cg_id = self._cg_id(symbol)
         data = self._request("simple/price", {
@@ -100,11 +119,17 @@ class CoinGeckoProvider(MarketDataProvider):
         )
 
     def get_candles(self, symbol: str, interval: str, period: str) -> pd.DataFrame:
-        if not symbol.upper().endswith("-USD") and symbol.upper() not in self.SYMBOL_MAP:
+        if not self._is_crypto_symbol(symbol):
             raise DataNotFoundError(f"CoinGecko: {symbol} is not a crypto pair")
         cg_id = self._cg_id(symbol)
-        days = self.DAYS_MAP.get(period, 30)
-        data = self._request(f"coins/{cg_id}/ohlc", {"vs_currency": "usd", "days": days})
+        requested_days = self.DAYS_MAP.get(period, 30)
+        # Cap days by interval to get appropriate granularity
+        if interval in self.INTERVAL_MAX_DAYS:
+            if requested_days == "max":
+                requested_days = self.INTERVAL_MAX_DAYS[interval]
+            else:
+                requested_days = min(requested_days, self.INTERVAL_MAX_DAYS[interval])
+        data = self._request(f"coins/{cg_id}/ohlc", {"vs_currency": "usd", "days": requested_days})
         if not data or not isinstance(data, list) or len(data) == 0:
             raise DataNotFoundError(f"CoinGecko no OHLC for {symbol}")
         df = pd.DataFrame(data, columns=["timestamp", "Open", "High", "Low", "Close"])
@@ -114,7 +139,7 @@ class CoinGeckoProvider(MarketDataProvider):
         # Try to join volume from market_chart endpoint
         try:
             mc = self._request(f"coins/{cg_id}/market_chart",
-                               {"vs_currency": "usd", "days": days})
+                               {"vs_currency": "usd", "days": requested_days})
             vols = mc.get("total_volumes", [])
             if vols:
                 vol_df = pd.DataFrame(vols, columns=["timestamp", "Volume"])

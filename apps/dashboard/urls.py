@@ -7,4 +7,6 @@ urlpatterns = [
     path("", views.index, name="index"),
     path("analyze/", views.analyze, name="analyze"),
     path("scalp/", views.scalp_view, name="scalp"),
+    path("scanner/", views.scanner_view, name="scanner"),
+    path("portfolio/", views.portfolio_view, name="portfolio"),
 ]

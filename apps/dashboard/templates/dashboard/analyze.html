@@ -51,15 +51,16 @@ const PERIOD = "{{ period }}";
 async function loadAll() {
   document.getElementById("status").textContent = "⏳ Loading…";
   try {
-    const [analyzeResp, candlesResp] = await Promise.all([
+    const [analyzeResp, candlesResp, forecastResp] = await Promise.all([
       fetch(`/api/analyze/${SYMBOL}/?interval=${INTERVAL}&period=${PERIOD}`).then(r => r.json()),
       fetch(`/api/candles/${SYMBOL}/?interval=${INTERVAL}&period=${PERIOD}`).then(r => r.json()),
+      fetch(`/api/forecast/${SYMBOL}/?interval=${INTERVAL}&period=${PERIOD}&steps=20`).then(r => r.json()),
     ]);
     if (!analyzeResp.ok) throw new Error(analyzeResp.error);
     if (!candlesResp.ok) throw new Error(candlesResp.error);
-    renderKPIs(analyzeResp);
+    renderKPIs(analyzeResp, forecastResp);
     renderComposite(analyzeResp.composite);
-    renderChart(candlesResp.data, analyzeResp);
+    renderChart(candlesResp.data, analyzeResp, forecastResp);
     renderTechnicalPanel(candlesResp.data);
     renderScalp(analyzeResp.scalp);
     renderSentiment(analyzeResp.sentiment);
@@ -69,18 +70,20 @@ async function loadAll() {
   }
 }
 
-function renderKPIs(a) {
+function renderKPIs(a, fc) {
   const profile = a.profile || {};
   const scalp = a.scalp;
   const price = a.current_price;
+  const em = fc?.expected_move;
+  const fmove = fc?.forecast?.expected_move_pct;
   document.getElementById("page-title").textContent = `${profile.name || SYMBOL} (${SYMBOL})`;
   document.getElementById("kpi-row").innerHTML = `
     <div class="kpi"><div class="k-label">Price</div><div class="k-value">${price.toFixed(4)}</div></div>
     <div class="kpi"><div class="k-label">Direction</div><div class="k-value dir-${scalp.direction.toLowerCase()}">${scalp.direction}</div></div>
     <div class="kpi"><div class="k-label">Confidence</div><div class="k-value">${scalp.confidence.toFixed(0)}</div></div>
     <div class="kpi"><div class="k-label">R:R</div><div class="k-value">${scalp.risk_reward}:1</div></div>
-    <div class="kpi"><div class="k-label">Sentiment</div><div class="k-value">${a.sentiment.label}</div></div>
-    <div class="kpi"><div class="k-label">Sector</div><div class="k-value small">${profile.sector || 'N/A'}</div></div>
+    ${em?.ok ? `<div class="kpi"><div class="k-label">Expected Move (±1σ)</div><div class="k-value ${em.fits_2_5_pct_target?'dir-long':''}">${em.expected_move_pct}%</div></div>` : ''}
+    ${fmove !== undefined ? `<div class="kpi"><div class="k-label">Ghost Projection</div><div class="k-value ${fmove>0?'dir-long':'dir-short'}">${fmove>0?'+':''}${fmove}%</div></div>` : ''}
   `;
 }
 
@@ -93,32 +96,78 @@ function renderComposite(c) {
     </div>`;
 }
 
-function renderChart(d, analyze) {
+function renderChart(d, analyze, fc) {
   const trace = {
     x: d.time, open: d.open, high: d.high, low: d.low, close: d.close,
     type: "candlestick", name: "Price",
-    increasing: {line: {color: "#00D4AA"}}, decreasing: {line: {color: "#E53935"}},
+    increasing: {line: {color: "#46D369"}}, decreasing: {line: {color: "#E50914"}},
   };
   const vol = {
     x: d.time, y: d.volume, type: "bar", name: "Volume",
-    yaxis: "y2", marker: {color: "rgba(139,155,180,0.3)"},
+    yaxis: "y2", marker: {color: "rgba(139,155,180,0.25)"},
   };
+  const traces = [trace, vol];
+
+  // ---- GHOST PREDICTION LINES ----
+  const f = fc?.forecast;
+  if (f && f.times && f.times.length > 0) {
+    // Link last actual price to start of forecast for continuity
+    const linkX = [d.time[d.time.length-1], f.times[0]];
+    const linkY = [d.close[d.close.length-1], f.central[0]];
+    traces.push({
+      x: linkX, y: linkY, type: "scatter", mode: "lines",
+      line: {color: "rgba(245,197,24,0.5)", width: 1, dash: "dot"},
+      showlegend: false, hoverinfo: "skip",
+    });
+    // 2σ cone fill (95%)
+    traces.push({
+      x: f.times.concat([...f.times].reverse()),
+      y: f.upper_2sd.concat([...f.lower_2sd].reverse()),
+      type: "scatter", mode: "lines", fill: "toself",
+      fillcolor: "rgba(245,197,24,0.08)",
+      line: {color: "rgba(245,197,24,0)"},
+      name: "±2σ (95%)", hoverinfo: "skip",
+    });
+    // 1σ cone fill (68%)
+    traces.push({
+      x: f.times.concat([...f.times].reverse()),
+      y: f.upper_1sd.concat([...f.lower_1sd].reverse()),
+      type: "scatter", mode: "lines", fill: "toself",
+      fillcolor: "rgba(245,197,24,0.18)",
+      line: {color: "rgba(245,197,24,0)"},
+      name: "±1σ (68%)", hoverinfo: "skip",
+    });
+    // Central ghost path (expected trajectory)
+    traces.push({
+      x: f.times, y: f.central, type: "scatter", mode: "lines+markers",
+      line: {color: "#F5C518", width: 2.5, dash: "dot"},
+      marker: {size: 6, symbol: "diamond", color: "#F5C518"},
+      name: `Ghost Forecast (${f.expected_move_pct >= 0 ? '+' : ''}${f.expected_move_pct}%)`,
+    });
+    // Linear trend secondary ghost line
+    traces.push({
+      x: f.times, y: f.linear, type: "scatter", mode: "lines",
+      line: {color: "rgba(139,155,180,0.6)", width: 1.5, dash: "dashdot"},
+      name: "Linear Trend",
+    });
+  }
+
   const scalp = analyze.scalp;
   const shapes = [];
   if (scalp.direction !== "NEUTRAL") {
-    const x1 = d.time[d.time.length - 1];
-    const x0 = d.time[Math.max(0, d.time.length - 20)];
-    shapes.push({type: "line", x0, x1, y0: scalp.entry, y1: scalp.entry,
-                 line: {color: "#FFA726", width: 2, dash: "dot"}});
-    shapes.push({type: "line", x0, x1, y0: scalp.stop_loss, y1: scalp.stop_loss,
-                 line: {color: "#E53935", width: 2, dash: "dash"}});
-    shapes.push({type: "line", x0, x1, y0: scalp.take_profit, y1: scalp.take_profit,
-                 line: {color: "#00C853", width: 2, dash: "dash"}});
+    const xEnd = (f?.times?.length) ? f.times[f.times.length - 1] : d.time[d.time.length - 1];
+    const xStart = d.time[Math.max(0, d.time.length - 20)];
+    shapes.push({type: "line", x0: xStart, x1: xEnd, y0: scalp.entry, y1: scalp.entry,
+                 line: {color: "#FFA00A", width: 2, dash: "dot"}});
+    shapes.push({type: "line", x0: xStart, x1: xEnd, y0: scalp.stop_loss, y1: scalp.stop_loss,
+                 line: {color: "#E50914", width: 2, dash: "dash"}});
+    shapes.push({type: "line", x0: xStart, x1: xEnd, y0: scalp.take_profit, y1: scalp.take_profit,
+                 line: {color: "#46D369", width: 2, dash: "dash"}});
   }
-  Plotly.newPlot("chart", [trace, vol], {
-    title: `${SYMBOL} ${INTERVAL}`,
-    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(19,47,76,0.3)",
-    font: {color: "#E0E6ED"}, height: 500,
+  Plotly.newPlot("chart", traces, {
+    title: `${SYMBOL} ${INTERVAL} — Candles + Ghost Prediction`,
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(31,31,31,0.5)",
+    font: {color: "#E0E6ED"}, height: 540,
     xaxis: {rangeslider: {visible: false}, gridcolor: "rgba(255,255,255,0.05)"},
     yaxis: {title: "Price", gridcolor: "rgba(255,255,255,0.05)"},
     yaxis2: {title: "Volume", overlaying: "y", side: "right", showgrid: false},

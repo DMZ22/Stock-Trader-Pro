@@ -18,14 +18,16 @@ class FirebaseUserMiddleware:
             "email": request.session.get("email"),
             "name": request.session.get("name"),
             "picture": request.session.get("picture"),
-        } if uid else {"authenticated": False}
+            "is_master": request.session.get("is_master", False),
+        } if uid else {"authenticated": False, "is_master": False}
         return self.get_response(request)
 
 
 class RequireLoginMiddleware:
     """Redirects unauthenticated users to /auth/login/ for protected paths."""
 
-    PUBLIC_PATHS = ("/auth/", "/static/", "/api/health/", "/admin/")
+    PUBLIC_PATHS = ("/auth/login/", "/auth/signup/", "/auth/session/",
+                     "/auth/master/", "/static/", "/api/health/", "/admin/")
 
     def __init__(self, get_response):
         self.get_response = get_response

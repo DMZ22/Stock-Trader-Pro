@@ -10,7 +10,9 @@ env = environ.Env(
     DJANGO_ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
     FINNHUB_RATE_LIMIT=(int, 60),
     ALPHA_VANTAGE_RATE_LIMIT=(int, 5),
-    REQUIRE_LOGIN=(bool, False),
+    REQUIRE_LOGIN=(bool, True),
+    MASTER_EMAIL=(str, "dev22ashish@gmail.com"),
+    SESSION_HOURS=(int, 48),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -151,6 +153,12 @@ FIREBASE_CONFIG = {
 }
 FIREBASE_PROJECT_ID = FIREBASE_CONFIG["PROJECT_ID"]
 REQUIRE_LOGIN = env("REQUIRE_LOGIN")
+MASTER_EMAIL = env("MASTER_EMAIL").lower().strip()
+
+# Session: 48 hours by default
+SESSION_COOKIE_AGE = env("SESSION_HOURS") * 3600
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+SESSION_SAVE_EVERY_REQUEST = True  # Refresh expiry on every request
 
 # Logging
 LOGGING = {

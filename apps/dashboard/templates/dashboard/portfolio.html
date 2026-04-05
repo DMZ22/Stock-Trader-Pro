@@ -1,0 +1,226 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Portfolio · Price Predictor{% endblock %}
+{% block content %}
+<h1>Portfolio & Alerts</h1>
+<p class="subtitle">Track paper trades with live P&L and manage price alerts.</p>
+
+<div class="portfolio-summary" id="portfolio-summary"></div>
+
+<div class="port-grid">
+  <div class="port-col">
+    <div class="card">
+      <div class="card-header">
+        <h3>Paper Trade</h3>
+        <button id="new-trade-btn" class="btn-primary btn-sm">+ New Trade</button>
+      </div>
+      <form id="new-trade-form" style="display:none">
+        <div class="form-row">
+          <input type="text" id="t-symbol" placeholder="Symbol (BTC-USD)" required list="symbols-list">
+          <select id="t-direction"><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select>
+        </div>
+        <div class="form-row">
+          <input type="number" id="t-entry" placeholder="Entry price" step="any" required>
+          <input type="number" id="t-quantity" placeholder="Quantity" step="any" value="1">
+        </div>
+        <div class="form-row">
+          <input type="number" id="t-stop" placeholder="Stop loss (optional)" step="any">
+          <input type="number" id="t-take" placeholder="Take profit (optional)" step="any">
+        </div>
+        <input type="text" id="t-notes" placeholder="Notes (optional)" maxlength="255">
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Open Trade</button>
+          <button type="button" id="cancel-trade" class="btn-secondary">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Open Trades</h3>
+      <div id="open-trades" class="trades-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>Closed Trades</h3>
+      <div id="closed-trades" class="trades-list"></div>
+    </div>
+  </div>
+
+  <div class="port-col">
+    <div class="card">
+      <div class="card-header">
+        <h3>Price Alerts</h3>
+        <button id="check-alerts-btn" class="btn-secondary btn-sm">🔔 Check Now</button>
+      </div>
+      <form id="new-alert-form" class="compact-form">
+        <input type="text" id="a-symbol" placeholder="Symbol" required list="symbols-list">
+        <select id="a-direction"><option value="ABOVE">Above</option><option value="BELOW">Below</option></select>
+        <input type="number" id="a-price" placeholder="Trigger price" step="any" required>
+        <input type="text" id="a-msg" placeholder="Note" maxlength="255">
+        <button type="submit" class="btn-primary btn-sm">Add Alert</button>
+      </form>
+      <div id="alerts-list" class="alerts-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>Triggered Alerts</h3>
+      <div id="triggered-list" class="alerts-list"></div>
+    </div>
+  </div>
+</div>
+
+<datalist id="symbols-list">
+  {% for cat, items in categories.items %}
+    {% for name, sym in items %}<option value="{{ sym }}">{{ name }}</option>{% endfor %}
+  {% endfor %}
+</datalist>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const fmt = n => (typeof n === 'number' ? n.toFixed(2) : n);
+const fmt4 = n => (typeof n === 'number' ? n.toFixed(4) : n);
+
+async function loadTrades() {
+  const r = await fetch('/auth/trades/').then(r => r.json());
+  if (!r.ok) return;
+  const summary = r.summary;
+  document.getElementById('portfolio-summary').innerHTML = `
+    <div class="pf-kpi"><span>Total P&amp;L</span><b class="${summary.total_pnl>=0?'up':'down'}">$${fmt(summary.total_pnl)}</b></div>
+    <div class="pf-kpi"><span>Open</span><b>${summary.open}</b></div>
+    <div class="pf-kpi"><span>Closed</span><b>${summary.closed}</b></div>
+  `;
+  const open = r.items.filter(t => t.status === 'OPEN');
+  const closed = r.items.filter(t => t.status === 'CLOSED');
+  document.getElementById('open-trades').innerHTML = open.length
+    ? open.map(renderTrade).join('')
+    : '<div class="empty-row">No open trades</div>';
+  document.getElementById('closed-trades').innerHTML = closed.length
+    ? closed.map(renderTrade).join('')
+    : '<div class="empty-row">No closed trades yet</div>';
+}
+
+function renderTrade(t) {
+  const dir = t.direction.toLowerCase();
+  const cls = t.pnl_abs >= 0 ? 'up' : 'down';
+  return `<div class="trade-row ${t.status.toLowerCase()}">
+    <div class="tr-sym">
+      <b>${t.symbol}</b>
+      <span class="badge dir-${dir}">${t.direction}</span>
+    </div>
+    <div class="tr-prices">
+      <div><span>Entry</span><b>${fmt4(t.entry)}</b></div>
+      <div><span>Current</span><b>${fmt4(t.current_price)}</b></div>
+      ${t.exit_price ? `<div><span>Exit</span><b>${fmt4(t.exit_price)}</b></div>` : ''}
+      <div><span>Qty</span><b>${t.quantity}</b></div>
+    </div>
+    <div class="tr-pnl ${cls}">
+      <div><b>$${fmt(t.pnl_abs)}</b></div>
+      <div>${t.pnl_pct>=0?'+':''}${fmt(t.pnl_pct)}%</div>
+    </div>
+    ${t.status === 'OPEN' ? `<button class="btn-link close-btn" data-id="${t.id}">Close</button>` : '<span class="tr-closed">CLOSED</span>'}
+  </div>`;
+}
+
+async function openTrade(e) {
+  e.preventDefault();
+  const body = {
+    symbol: document.getElementById('t-symbol').value,
+    direction: document.getElementById('t-direction').value,
+    entry: document.getElementById('t-entry').value,
+    quantity: document.getElementById('t-quantity').value,
+    stop_loss: document.getElementById('t-stop').value || null,
+    take_profit: document.getElementById('t-take').value || null,
+    notes: document.getElementById('t-notes').value,
+  };
+  const r = await fetch('/auth/trades/open/', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const j = await r.json();
+  if (j.ok) {
+    document.getElementById('new-trade-form').reset();
+    document.getElementById('new-trade-form').style.display = 'none';
+    loadTrades();
+  } else { alert('Error: ' + j.error); }
+}
+
+async function closeTrade(id) {
+  if (!confirm('Close this trade at current market price?')) return;
+  const r = await fetch('/auth/trades/close/', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+  const j = await r.json();
+  if (j.ok) loadTrades();
+  else alert('Error: ' + j.error);
+}
+
+async function loadAlerts() {
+  const r = await fetch('/auth/alerts/').then(r => r.json());
+  if (!r.ok) return;
+  const active = r.items.filter(a => a.active);
+  const triggered = r.items.filter(a => !a.active);
+  document.getElementById('alerts-list').innerHTML = active.length
+    ? active.map(renderAlert).join('')
+    : '<div class="empty-row">No active alerts</div>';
+  document.getElementById('triggered-list').innerHTML = triggered.length
+    ? triggered.map(renderAlert).join('')
+    : '<div class="empty-row">No triggered alerts</div>';
+}
+
+function renderAlert(a) {
+  return `<div class="alert-row ${a.active?'active':'triggered'}">
+    <div><b>${a.symbol}</b> <span class="chip">${a.direction} ${a.trigger_price}</span></div>
+    ${a.message ? `<div class="alert-msg">${a.message}</div>` : ''}
+    <div class="alert-meta">
+      ${a.triggered_at ? '🔔 ' + new Date(a.triggered_at).toLocaleString() : '⏳ ' + new Date(a.created_at).toLocaleString()}
+      ${a.active ? `<button class="btn-link del-alert" data-id="${a.id}">Delete</button>` : ''}
+    </div>
+  </div>`;
+}
+
+async function createAlert(e) {
+  e.preventDefault();
+  const body = {
+    symbol: document.getElementById('a-symbol').value,
+    direction: document.getElementById('a-direction').value,
+    trigger_price: document.getElementById('a-price').value,
+    message: document.getElementById('a-msg').value,
+  };
+  const r = await fetch('/auth/alerts/create/', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const j = await r.json();
+  if (j.ok) { document.getElementById('new-alert-form').reset(); loadAlerts(); }
+  else alert('Error: ' + j.error);
+}
+
+async function deleteAlert(id) {
+  await fetch('/auth/alerts/delete/', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+  loadAlerts();
+}
+
+async function checkAlerts() {
+  const r = await fetch('/auth/alerts/check/').then(r => r.json());
+  if (r.ok) {
+    if (r.triggered.length > 0) {
+      alert(`🔔 ${r.triggered.length} alert(s) triggered!\n\n` + r.triggered.map(t => `${t.symbol} ${t.direction} ${t.trigger_price} → $${t.current_price.toFixed(4)}`).join('\n'));
+    } else {
+      alert(`Checked ${r.checked} active alerts. None triggered.`);
+    }
+    loadAlerts();
+  }
+}
+
+document.getElementById('new-trade-btn').addEventListener('click', () => {
+  const f = document.getElementById('new-trade-form');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('cancel-trade').addEventListener('click', () => {
+  document.getElementById('new-trade-form').style.display = 'none';
+});
+document.getElementById('new-trade-form').addEventListener('submit', openTrade);
+document.getElementById('new-alert-form').addEventListener('submit', createAlert);
+document.getElementById('check-alerts-btn').addEventListener('click', checkAlerts);
+document.body.addEventListener('click', e => {
+  if (e.target.matches('.close-btn')) closeTrade(e.target.dataset.id);
+  if (e.target.matches('.del-alert')) deleteAlert(e.target.dataset.id);
+});
+
+loadTrades();
+loadAlerts();
+setInterval(loadTrades, 30000); // Refresh P&L every 30s
+</script>
+{% endblock %}

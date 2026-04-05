@@ -7,8 +7,9 @@
 
   {% if not firebase_config.configured %}
     <div class="auth-error">
-      ⚠ Firebase not configured. Add <code>FIREBASE_API_KEY</code>, <code>FIREBASE_AUTH_DOMAIN</code>,
-      <code>FIREBASE_PROJECT_ID</code>, and <code>FIREBASE_APP_ID</code> to your <code>.env</code> file.
+      ⚠ Firebase email/Google login is not configured yet. Use <b>Master Login</b> below to sign in,
+      or add your Firebase keys (<code>FIREBASE_API_KEY</code>, <code>FIREBASE_AUTH_DOMAIN</code>,
+      <code>FIREBASE_PROJECT_ID</code>, <code>FIREBASE_APP_ID</code>) to <code>.env</code>.
     </div>
   {% else %}
     <input type="email" id="email" placeholder="Email" autocomplete="email">
@@ -20,6 +21,16 @@
       Sign in with Google
     </button>
     <div class="auth-switch">Don't have an account? <a href="{% url 'firebase_auth:signup' %}">Create one</a></div>
+  {% endif %}
+
+  {% if master_email %}
+    <div class="master-section">
+      <div class="auth-divider">— Master Access —</div>
+      <a href="{% url 'firebase_auth:master' %}?next={{ next }}" class="btn-primary master-btn">
+        🔑 Login as Master ({{ master_email }})
+      </a>
+      <div class="auth-switch-sub">No password required for master owner account</div>
+    </div>
   {% endif %}
 </div>
 {% endblock %}

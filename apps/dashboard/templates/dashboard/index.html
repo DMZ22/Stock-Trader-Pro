@@ -1,11 +1,12 @@
 {% extends "dashboard/base.html" %}
-{% block title %}Stock Trader Pro — Dashboard{% endblock %}
+{% block title %}Price Predictor · AI Crypto Trading Assistant{% endblock %}
 {% block content %}
 <div class="hero">
-  <h1>Stock Trader Pro</h1>
-  <p class="subtitle">Multi-provider market data · Real-time scalp signals · LSTM forecasting · News sentiment</p>
+  <div class="hero-tag">AI Trading Assistant · Crypto + Stocks + Metals</div>
+  <h1>Predict the Next Move.</h1>
+  <p class="subtitle">AI-ranked market scanner, ghost trajectory forecasting, scalp signals with entry/SL/TP, and multi-timeframe confluence across 230+ assets.</p>
   <form action="{% url 'dashboard:analyze' %}" method="get" class="search-form">
-    <input type="text" name="symbol" placeholder="Enter ticker (e.g., AAPL, BTC-USD, RELIANCE.NS)" required list="symbols-list">
+    <input type="text" name="symbol" placeholder="BTC-USD, ETH-USDT, GOLD, AAPL, RELIANCE.NS..." required list="symbols-list">
     <datalist id="symbols-list">
       {% for cat, items in categories.items %}
         {% for name, sym in items %}
@@ -45,25 +46,25 @@
 </div>
 
 <div class="features">
-  <div class="feature">
+  <a href="{% url 'dashboard:scanner' %}" class="feature">
+    <div class="feature-icon">🤖</div>
+    <h3>AI Market Scanner</h3>
+    <p>Parallel scan across dozens of crypto, stocks, and metals. Ranked by confidence, R:R, and multi-timeframe confluence.</p>
+  </a>
+  <a href="{% url 'dashboard:scalp' %}" class="feature">
     <div class="feature-icon">⚡</div>
-    <h3>Scalp Trade Signals</h3>
-    <p>EMA crossover + VWAP + Supertrend + ATR-based stop-loss and take-profit. Entry, SL, TP, and risk-reward computed for every signal.</p>
-  </div>
+    <h3>Scalp Signals</h3>
+    <p>Live entry/SL/TP with ATR-based risk management, position sizing, and 8-factor confluence scoring.</p>
+  </a>
+  <a href="{% url 'dashboard:analyze' %}?symbol=BTC-USD" class="feature">
+    <div class="feature-icon">👻</div>
+    <h3>Ghost Trajectory</h3>
+    <p>Forward price projection with ±1σ and ±2σ confidence cones on every chart. See where price is likely headed.</p>
+  </a>
   <div class="feature">
-    <div class="feature-icon">📊</div>
-    <h3>20+ Technical Indicators</h3>
-    <p>RSI, MACD, Bollinger, ADX, Stochastic, Williams %R, CCI, MFI, CMF, Supertrend, VWAP — all with canonical formulas.</p>
-  </div>
-  <div class="feature">
-    <div class="feature-icon">🔌</div>
-    <h3>Multi-Provider API</h3>
-    <p>Finnhub, Twelve Data, Alpha Vantage, Yahoo Finance — automatic failover, retry logic, rate limiting. Data you can trust.</p>
-  </div>
-  <div class="feature">
-    <div class="feature-icon">🧠</div>
-    <h3>LSTM ML Predictor</h3>
-    <p>Bidirectional LSTM with 24 input features. Multi-step forecasting with MAE, MAPE, R² and directional accuracy metrics.</p>
+    <div class="feature-icon">💎</div>
+    <h3>230+ Assets</h3>
+    <p>BTC, ETH, all major crypto USDT/USD pairs, gold, silver, platinum, US tech, Indian NSE, forex, and commodities.</p>
   </div>
 </div>
 {% endblock %}

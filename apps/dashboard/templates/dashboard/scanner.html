@@ -1,0 +1,135 @@
+{% extends "dashboard/base.html" %}
+{% block title %}AI Scanner · Price Predictor{% endblock %}
+{% block content %}
+<div class="scanner-header">
+  <div class="hero-tag">AI-Ranked Opportunities</div>
+  <h1>Market Scanner</h1>
+  <p class="subtitle">Real-time multi-asset scan ranked by confidence, confluence, and expected-move profile.</p>
+</div>
+
+<div class="scanner-controls card">
+  <div class="control-group">
+    <label>Universe</label>
+    <select id="universe-select">
+      <option value="crypto_major" selected>Crypto Majors (USD)</option>
+      <option value="crypto_usdt">Crypto USDT Pairs</option>
+      <option value="crypto_all">All Crypto (28 coins)</option>
+      <option value="us_tech">US Tech Stocks</option>
+      <option value="metals">Precious Metals</option>
+      <option value="forex">Forex Majors</option>
+      <option value="indian">Indian NSE Top 15</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label>Timeframe</label>
+    <select id="interval-select">
+      <option value="15m">15m</option>
+      <option value="1h" selected>1h</option>
+      <option value="4h">4h</option>
+      <option value="1d">1d</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label>Period</label>
+    <select id="period-select">
+      <option value="5d">5d</option>
+      <option value="1mo" selected>1mo</option>
+      <option value="3mo">3mo</option>
+      <option value="6mo">6mo</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label>Min Confidence</label>
+    <input type="number" id="min-conf" value="40" min="0" max="100" step="5">
+  </div>
+  <button id="scan-btn" class="btn-primary">Scan Market</button>
+  <div class="scan-stats" id="scan-stats"></div>
+</div>
+
+<div id="scanner-feed" class="scanner-feed"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const feedEl = document.getElementById("scanner-feed");
+const statsEl = document.getElementById("scan-stats");
+
+async function runScan() {
+  const universe = document.getElementById("universe-select").value;
+  const interval = document.getElementById("interval-select").value;
+  const period = document.getElementById("period-select").value;
+  const minConf = document.getElementById("min-conf").value;
+  feedEl.innerHTML = '<div class="loading">🔍 Scanning market — fetching data, computing indicators, ranking setups…</div>';
+  statsEl.textContent = "";
+  try {
+    const r = await fetch(`/api/scanner/?universe=${universe}&interval=${interval}&period=${period}&min_confidence=${minConf}`);
+    const j = await r.json();
+    if (!j.ok) { feedEl.innerHTML = `<div class="error-card">❌ ${j.error}</div>`; return; }
+    renderFeed(j);
+  } catch (e) {
+    feedEl.innerHTML = `<div class="error-card">❌ ${e.message}</div>`;
+  }
+}
+
+function renderFeed(r) {
+  statsEl.innerHTML = `<b>${r.scanned}</b> scanned · <b>${r.signals.length}</b> opportunities · <b>${r.actionable}</b> actionable${r.failed.length?` · <span class="stat-failed">${r.failed.length} failed</span>`:''}`;
+  if (r.signals.length === 0) {
+    feedEl.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">🤖</div>
+      <h3>No opportunities meet your threshold</h3>
+      <p>Try lowering min confidence, changing timeframe, or scanning a different universe.</p>
+    </div>`;
+    return;
+  }
+  feedEl.innerHTML = r.signals.map((s, i) => renderCard(s, i)).join('');
+}
+
+function renderCard(s, rank) {
+  const dirClass = s.direction.toLowerCase();
+  const actionClass = s.action.toLowerCase();
+  const changeArrow = s.direction === "LONG" ? "↑" : "↓";
+  const changeClass = s.direction === "LONG" ? "up" : "down";
+  const patterns = [...(s.patterns_bullish||[]), ...(s.patterns_bearish||[])];
+  const emBadge = s.fits_target ? `<span class="em-badge target">${s.expected_move_pct}% move · 2-5% target ✓</span>`
+                  : s.expected_move_pct ? `<span class="em-badge">±${s.expected_move_pct}% expected</span>` : '';
+
+  return `<div class="scan-card ${dirClass}" data-rank="${rank+1}">
+    <div class="scan-rank">#${rank+1}</div>
+    <div class="scan-main">
+      <div class="scan-top">
+        <div class="scan-symbol-block">
+          <div class="scan-symbol">${s.symbol}</div>
+          <div class="scan-price">$${s.price} <span class="${changeClass}">${changeArrow}</span></div>
+        </div>
+        <div class="scan-badges">
+          <span class="badge dir-${dirClass}">${s.direction}</span>
+          <span class="badge action-${actionClass}">${s.action}</span>
+          <span class="badge strength-${s.strength.toLowerCase()}">${s.strength}</span>
+        </div>
+        <div class="scan-confidence">
+          <div class="conf-num">${s.confidence.toFixed(0)}</div>
+          <div class="conf-lbl">Confidence</div>
+        </div>
+      </div>
+      ${emBadge ? `<div class="scan-em-row">${emBadge}</div>` : ''}
+      <div class="scan-insight">${s.insight}</div>
+      <div class="scan-levels">
+        <div><span>Entry</span><b>${s.entry}</b></div>
+        <div><span>Stop</span><b class="stop">${s.stop_loss}</b></div>
+        <div><span>Target</span><b class="target">${s.take_profit}</b></div>
+        <div><span>R:R</span><b>${s.risk_reward}:1</b></div>
+        <div><span>Regime</span><b>${s.regime || '—'}</b></div>
+        <div><span>HTF</span><b>${s.htf_trend || '—'}</b></div>
+      </div>
+      ${patterns.length ? `<div class="scan-patterns">${patterns.map(p => `<span class="chip chip-${s.direction==='LONG'?'bull':'bear'}">${p}</span>`).join('')}</div>` : ''}
+      <div class="scan-actions">
+        <a href="/analyze/?symbol=${encodeURIComponent(s.symbol)}&interval=1h&period=1mo" class="btn-link">📊 Analyze</a>
+        <a href="/scalp/?symbol=${encodeURIComponent(s.symbol)}" class="btn-link">⚡ Scalp</a>
+      </div>
+    </div>
+  </div>`;
+}
+
+document.getElementById("scan-btn").addEventListener("click", runScan);
+runScan();
+</script>
+{% endblock %}

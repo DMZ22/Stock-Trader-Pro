@@ -14,17 +14,54 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from .providers import (
     MarketDataProvider, ProviderError, RateLimitError, DataNotFoundError,
     YFinanceProvider, FinnhubProvider, AlphaVantageProvider, TwelveDataProvider,
-    CoinGeckoProvider,
+    CoinGeckoProvider, BinanceProvider, KrakenProvider,
 )
 from .providers.base import Quote
 from .rate_limiter import REGISTRY
+from .circuit_breaker import REGISTRY as CIRCUIT_REGISTRY
 
 logger = logging.getLogger(__name__)
 
 
+# Symbol normalization: map common user-friendly aliases to provider-native tickers
+SYMBOL_ALIASES = {
+    # Crypto: USDT/USDC/BUSD → Yahoo-style USD pairs for yfinance compatibility
+    # (CoinGecko provider handles USDT suffix internally)
+    "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD", "SOLUSDT": "SOL-USD",
+    "BNBUSDT": "BNB-USD", "XRPUSDT": "XRP-USD", "ADAUSDT": "ADA-USD",
+    "DOGEUSDT": "DOGE-USD", "AVAXUSDT": "AVAX-USD", "DOTUSDT": "DOT-USD",
+    "LINKUSDT": "LINK-USD", "MATICUSDT": "MATIC-USD", "LTCUSDT": "LTC-USD",
+    # Gold/Silver - route to futures tickers (yfinance doesn't carry XAUUSD=X reliably)
+    "XAUUSD": "GC=F", "GOLDUSD": "GC=F", "GOLD": "GC=F", "XAUUSD=X": "GC=F",
+    "XAGUSD": "SI=F", "SILVERUSD": "SI=F", "SILVER": "SI=F", "XAGUSD=X": "SI=F",
+    "XPTUSD": "PL=F", "PLATINUMUSD": "PL=F", "XPTUSD=X": "PL=F",
+    "XPDUSD": "PA=F", "PALLADIUMUSD": "PA=F", "XPDUSD=X": "PA=F",
+    # Forex normalizations
+    "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "JPY=X",
+    "USDINR": "INR=X", "AUDUSD": "AUDUSD=X", "USDCAD": "CAD=X",
+}
+
+
+def normalize_symbol(symbol: str) -> str:
+    """Normalize user input to provider-native ticker format."""
+    if not symbol:
+        return symbol
+    s = symbol.strip().upper()
+    # Direct alias match (EURUSD, BTCUSDT, XAUUSD, etc.)
+    if s in SYMBOL_ALIASES:
+        return SYMBOL_ALIASES[s]
+    # Convert XXX-USDT → XXX-USD (for crypto via yfinance)
+    for suffix_in, suffix_out in [("-USDT", "-USD"), ("-USDC", "-USD"),
+                                    ("-BUSD", "-USD"), ("/USDT", "-USD"),
+                                    ("/USD", "-USD")]:
+        if s.endswith(suffix_in):
+            return s.replace(suffix_in, suffix_out)
+    return s
+
+
 # Provider priority: best data quality → fallback
-# CoinGecko tried first for crypto symbols; quickly rejects non-crypto
-DEFAULT_PROVIDER_ORDER = ["coingecko", "finnhub", "twelve_data", "alpha_vantage", "yfinance"]
+# Binance/CoinGecko handle crypto; yfinance is the broad-universe workhorse
+DEFAULT_PROVIDER_ORDER = ["binance", "kraken", "yfinance", "finnhub", "twelve_data", "coingecko", "alpha_vantage"]
 
 # Cache TTLs (seconds)
 QUOTE_TTL = 30
@@ -43,6 +80,8 @@ class MarketDataService:
     def _build_providers(self) -> List[MarketDataProvider]:
         api_keys = settings.API_KEYS
         candidates = {
+            "binance": lambda: BinanceProvider(),
+            "kraken": lambda: KrakenProvider(),
             "coingecko": lambda: CoinGeckoProvider(),
             "finnhub": lambda: FinnhubProvider(api_keys.get("FINNHUB")),
             "twelve_data": lambda: TwelveDataProvider(api_keys.get("TWELVE_DATA")),
@@ -80,7 +119,7 @@ class MarketDataService:
     # QUOTE
     # -------------------------------------------------------------------------
     def get_quote(self, symbol: str, use_cache: bool = True) -> Quote:
-        symbol = symbol.strip().upper()
+        symbol = normalize_symbol(symbol)
         ckey = self._cache_key("quote", symbol)
         if use_cache:
             cached = cache.get(ckey)
@@ -89,13 +128,24 @@ class MarketDataService:
 
         last_err = None
         for provider in self.providers:
+            circuit = CIRCUIT_REGISTRY.get(provider.name)
+            if circuit.is_open():
+                logger.debug("[%s] circuit open, skipping", provider.name)
+                continue
             try:
                 self._apply_rate_limit(provider.name)
                 quote = self._retry_quote(provider, symbol)
+                circuit.record_success()
                 cache.set(ckey, quote, QUOTE_TTL)
                 return quote
-            except (DataNotFoundError, ProviderError) as e:
+            except DataNotFoundError as e:
+                # Symbol just not available from this provider; don't trip circuit
                 last_err = e
+                logger.debug("[%s] quote n/a for %s: %s", provider.name, symbol, e)
+                continue
+            except (RateLimitError, ProviderError) as e:
+                last_err = e
+                circuit.record_failure()
                 logger.warning("[%s] quote failed for %s: %s", provider.name, symbol, e)
                 continue
         raise ProviderError(f"All providers failed for {symbol}: {last_err}")
@@ -114,7 +164,7 @@ class MarketDataService:
     # -------------------------------------------------------------------------
     def get_candles(self, symbol: str, interval: str = "1d", period: str = "1y",
                     use_cache: bool = True) -> pd.DataFrame:
-        symbol = symbol.strip().upper()
+        symbol = normalize_symbol(symbol)
         ckey = self._cache_key("candles", symbol, interval, period)
         if use_cache:
             cached = cache.get(ckey)
@@ -123,16 +173,27 @@ class MarketDataService:
 
         last_err = None
         for provider in self.providers:
+            circuit = CIRCUIT_REGISTRY.get(provider.name)
+            if circuit.is_open():
+                logger.debug("[%s] circuit open, skipping", provider.name)
+                continue
             try:
                 self._apply_rate_limit(provider.name)
                 df = self._retry_candles(provider, symbol, interval, period)
                 if df is None or df.empty:
                     continue
+                circuit.record_success()
                 cache.set(ckey, df, CANDLES_TTL)
                 logger.info("[%s] candles %s %s/%s: %d bars", provider.name, symbol, interval, period, len(df))
                 return df
-            except (DataNotFoundError, ProviderError) as e:
+            except DataNotFoundError as e:
+                # Symbol unsupported by this provider; not a failure
                 last_err = e
+                logger.debug("[%s] candles n/a for %s: %s", provider.name, symbol, e)
+                continue
+            except (RateLimitError, ProviderError) as e:
+                last_err = e
+                circuit.record_failure()
                 logger.warning("[%s] candles failed for %s: %s", provider.name, symbol, e)
                 continue
         raise ProviderError(f"All providers failed for candles {symbol}: {last_err}")
@@ -150,7 +211,7 @@ class MarketDataService:
     # PROFILE
     # -------------------------------------------------------------------------
     def get_profile(self, symbol: str, use_cache: bool = True) -> dict:
-        symbol = symbol.strip().upper()
+        symbol = normalize_symbol(symbol)
         ckey = self._cache_key("profile", symbol)
         if use_cache:
             cached = cache.get(ckey)

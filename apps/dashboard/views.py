@@ -24,3 +24,17 @@ def scalp_view(request):
     return render(request, "dashboard/scalp.html", {
         "categories": ASSET_CATEGORIES,
     })
+
+
+def scanner_view(request):
+    """AI-ranked market scanner across multiple asset universes."""
+    return render(request, "dashboard/scanner.html", {
+        "categories": ASSET_CATEGORIES,
+    })
+
+
+def portfolio_view(request):
+    """Paper trading portfolio + price alerts management."""
+    return render(request, "dashboard/portfolio.html", {
+        "categories": ASSET_CATEGORIES,
+    })
