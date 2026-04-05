@@ -1,0 +1,193 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{{ symbol }} Analysis · Stock Trader Pro{% endblock %}
+{% block content %}
+<div class="analyze-header">
+  <h1 id="page-title">{{ symbol }}</h1>
+  <form method="get" class="inline-form">
+    <input type="text" name="symbol" value="{{ symbol }}" list="symbols-list">
+    <datalist id="symbols-list">
+      {% for cat, items in categories.items %}
+        {% for name, sym in items %}<option value="{{ sym }}">{{ name }}</option>{% endfor %}
+      {% endfor %}
+    </datalist>
+    <select name="interval">
+      {% for i in "1m,5m,15m,30m,1h,1d"|slice:":100" %}{% endfor %}
+      <option value="1m" {% if interval == "1m" %}selected{% endif %}>1m</option>
+      <option value="5m" {% if interval == "5m" %}selected{% endif %}>5m</option>
+      <option value="15m" {% if interval == "15m" %}selected{% endif %}>15m</option>
+      <option value="30m" {% if interval == "30m" %}selected{% endif %}>30m</option>
+      <option value="1h" {% if interval == "1h" %}selected{% endif %}>1h</option>
+      <option value="1d" {% if interval == "1d" %}selected{% endif %}>1d</option>
+    </select>
+    <select name="period">
+      <option value="5d" {% if period == "5d" %}selected{% endif %}>5d</option>
+      <option value="1mo" {% if period == "1mo" %}selected{% endif %}>1mo</option>
+      <option value="3mo" {% if period == "3mo" %}selected{% endif %}>3mo</option>
+      <option value="6mo" {% if period == "6mo" %}selected{% endif %}>6mo</option>
+      <option value="1y" {% if period == "1y" %}selected{% endif %}>1y</option>
+      <option value="2y" {% if period == "2y" %}selected{% endif %}>2y</option>
+    </select>
+    <button type="submit" class="btn-primary">Reload</button>
+  </form>
+</div>
+
+<div id="kpi-row" class="kpi-row"></div>
+<div id="composite-banner"></div>
+<div id="chart" class="chart-container"></div>
+<div class="two-col">
+  <div id="tech-panel" class="chart-container"></div>
+  <div id="scalp-card"></div>
+</div>
+<div id="sentiment-section"></div>
+<div id="status" class="status-row"></div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const SYMBOL = "{{ symbol }}";
+const INTERVAL = "{{ interval }}";
+const PERIOD = "{{ period }}";
+
+async function loadAll() {
+  document.getElementById("status").textContent = "⏳ Loading…";
+  try {
+    const [analyzeResp, candlesResp] = await Promise.all([
+      fetch(`/api/analyze/${SYMBOL}/?interval=${INTERVAL}&period=${PERIOD}`).then(r => r.json()),
+      fetch(`/api/candles/${SYMBOL}/?interval=${INTERVAL}&period=${PERIOD}`).then(r => r.json()),
+    ]);
+    if (!analyzeResp.ok) throw new Error(analyzeResp.error);
+    if (!candlesResp.ok) throw new Error(candlesResp.error);
+    renderKPIs(analyzeResp);
+    renderComposite(analyzeResp.composite);
+    renderChart(candlesResp.data, analyzeResp);
+    renderTechnicalPanel(candlesResp.data);
+    renderScalp(analyzeResp.scalp);
+    renderSentiment(analyzeResp.sentiment);
+    document.getElementById("status").textContent = "✅ Loaded " + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById("status").innerHTML = `<span class="error">❌ ${e.message}</span>`;
+  }
+}
+
+function renderKPIs(a) {
+  const profile = a.profile || {};
+  const scalp = a.scalp;
+  const price = a.current_price;
+  document.getElementById("page-title").textContent = `${profile.name || SYMBOL} (${SYMBOL})`;
+  document.getElementById("kpi-row").innerHTML = `
+    <div class="kpi"><div class="k-label">Price</div><div class="k-value">${price.toFixed(4)}</div></div>
+    <div class="kpi"><div class="k-label">Direction</div><div class="k-value dir-${scalp.direction.toLowerCase()}">${scalp.direction}</div></div>
+    <div class="kpi"><div class="k-label">Confidence</div><div class="k-value">${scalp.confidence.toFixed(0)}</div></div>
+    <div class="kpi"><div class="k-label">R:R</div><div class="k-value">${scalp.risk_reward}:1</div></div>
+    <div class="kpi"><div class="k-label">Sentiment</div><div class="k-value">${a.sentiment.label}</div></div>
+    <div class="kpi"><div class="k-label">Sector</div><div class="k-value small">${profile.sector || 'N/A'}</div></div>
+  `;
+}
+
+function renderComposite(c) {
+  const cls = c.label.toLowerCase().replace(" ", "-");
+  document.getElementById("composite-banner").innerHTML = `
+    <div class="composite-banner sig-${cls}">
+      <div class="cb-label">${c.label}</div>
+      <div class="cb-score">Score: ${c.composite_score} · Action: ${c.action} · ${c.agreement}</div>
+    </div>`;
+}
+
+function renderChart(d, analyze) {
+  const trace = {
+    x: d.time, open: d.open, high: d.high, low: d.low, close: d.close,
+    type: "candlestick", name: "Price",
+    increasing: {line: {color: "#00D4AA"}}, decreasing: {line: {color: "#E53935"}},
+  };
+  const vol = {
+    x: d.time, y: d.volume, type: "bar", name: "Volume",
+    yaxis: "y2", marker: {color: "rgba(139,155,180,0.3)"},
+  };
+  const scalp = analyze.scalp;
+  const shapes = [];
+  if (scalp.direction !== "NEUTRAL") {
+    const x1 = d.time[d.time.length - 1];
+    const x0 = d.time[Math.max(0, d.time.length - 20)];
+    shapes.push({type: "line", x0, x1, y0: scalp.entry, y1: scalp.entry,
+                 line: {color: "#FFA726", width: 2, dash: "dot"}});
+    shapes.push({type: "line", x0, x1, y0: scalp.stop_loss, y1: scalp.stop_loss,
+                 line: {color: "#E53935", width: 2, dash: "dash"}});
+    shapes.push({type: "line", x0, x1, y0: scalp.take_profit, y1: scalp.take_profit,
+                 line: {color: "#00C853", width: 2, dash: "dash"}});
+  }
+  Plotly.newPlot("chart", [trace, vol], {
+    title: `${SYMBOL} ${INTERVAL}`,
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(19,47,76,0.3)",
+    font: {color: "#E0E6ED"}, height: 500,
+    xaxis: {rangeslider: {visible: false}, gridcolor: "rgba(255,255,255,0.05)"},
+    yaxis: {title: "Price", gridcolor: "rgba(255,255,255,0.05)"},
+    yaxis2: {title: "Volume", overlaying: "y", side: "right", showgrid: false},
+    shapes, margin: {t: 40, r: 60, b: 40, l: 60},
+    legend: {orientation: "h", y: -0.15},
+  }, {responsive: true});
+}
+
+function renderTechnicalPanel(d) {
+  // Placeholder: simple close-price line. Server-computed indicators are visible in scalp card.
+  const trace = {x: d.time, y: d.close, type: "scatter", mode: "lines", name: "Close",
+                 line: {color: "#00D4AA"}};
+  Plotly.newPlot("tech-panel", [trace], {
+    title: "Price Trend", paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(19,47,76,0.3)",
+    font: {color: "#E0E6ED"}, height: 400,
+    xaxis: {gridcolor: "rgba(255,255,255,0.05)"}, yaxis: {gridcolor: "rgba(255,255,255,0.05)"},
+    margin: {t: 40, r: 30, b: 40, l: 60},
+  }, {responsive: true});
+}
+
+function renderScalp(s) {
+  const dirClass = s.direction.toLowerCase();
+  document.getElementById("scalp-card").innerHTML = `
+    <div class="scalp-summary card">
+      <h3>⚡ Scalp Signal</h3>
+      <div class="s-badges">
+        <span class="badge dir-${dirClass}">${s.direction}</span>
+        <span class="badge">${s.action}</span>
+        <span class="badge">${s.strength}</span>
+      </div>
+      <div class="s-levels">
+        <div><span>Entry</span><b>${s.entry}</b></div>
+        <div><span>Stop Loss</span><b class="stop">${s.stop_loss}</b></div>
+        <div><span>Take Profit</span><b class="target">${s.take_profit}</b></div>
+        <div><span>R:R</span><b>${s.risk_reward}:1</b></div>
+      </div>
+      <details>
+        <summary>Reasons (${s.reasons.length})</summary>
+        <ul>${s.reasons.map(r => `<li>${r}</li>`).join('')}</ul>
+      </details>
+    </div>`;
+}
+
+function renderSentiment(sent) {
+  if (sent.count === 0) {
+    document.getElementById("sentiment-section").innerHTML =
+      `<div class="card"><h3>📰 News Sentiment</h3><p>No recent news available.</p></div>`;
+    return;
+  }
+  const headlines = sent.headlines.map(h => `
+    <li class="headline ${h.polarity > 0.05 ? 'pos' : h.polarity < -0.05 ? 'neg' : 'neu'}">
+      <a href="${h.url}" target="_blank">${h.title}</a>
+      <span class="src">${h.source}</span>
+      <span class="pol">${h.polarity > 0 ? '+' : ''}${h.polarity}</span>
+    </li>`).join('');
+  document.getElementById("sentiment-section").innerHTML = `
+    <div class="card">
+      <h3>📰 News Sentiment — ${sent.label} (${sent.count} articles)</h3>
+      <div class="sent-stats">
+        <div>Bullish: <b>${sent.bullish_pct}%</b></div>
+        <div>Bearish: <b>${sent.bearish_pct}%</b></div>
+        <div>Neutral: <b>${sent.neutral_pct}%</b></div>
+        <div>Avg Polarity: <b>${sent.avg_polarity}</b></div>
+      </div>
+      <ul class="headlines">${headlines}</ul>
+    </div>`;
+}
+
+loadAll();
+setInterval(loadAll, 60000);
+</script>
+{% endblock %}
