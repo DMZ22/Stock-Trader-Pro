@@ -1,0 +1,63 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Sign Up · Stock Trader Pro{% endblock %}
+{% block content %}
+<div class="auth-card">
+  <h1>✨ Create Account</h1>
+  <div id="auth-error" class="auth-error" style="display:none"></div>
+
+  {% if not firebase_config.configured %}
+    <div class="auth-error">⚠ Firebase not configured — see README.</div>
+  {% else %}
+    <input type="email" id="email" placeholder="Email" autocomplete="email">
+    <input type="password" id="password" placeholder="Password (6+ chars)" autocomplete="new-password">
+    <button class="btn-primary" id="email-signup">Sign Up with Email</button>
+    <div class="auth-divider">— or —</div>
+    <button class="btn-primary google-btn" id="google-signup">Continue with Google</button>
+    <div class="auth-switch">Already have an account? <a href="{% url 'firebase_auth:login' %}">Sign in</a></div>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+{% if firebase_config.configured %}
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+const firebaseConfig = {{ firebase_config_json|safe|default:"{}" }};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+
+const errEl = document.getElementById("auth-error");
+function showErr(msg) { errEl.textContent = msg; errEl.style.display = "block"; }
+
+async function exchangeToken(user) {
+  const idToken = await user.getIdToken();
+  const r = await fetch("/auth/session/", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({idToken}),
+  });
+  const j = await r.json();
+  if (!j.ok) { showErr(j.error || "Signup failed"); return; }
+  window.location.href = "/";
+}
+
+document.getElementById("email-signup").onclick = async () => {
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  if (!email || password.length < 6) return showErr("Email + 6+ char password required");
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await exchangeToken(cred.user);
+  } catch (e) { showErr(e.message); }
+};
+
+document.getElementById("google-signup").onclick = async () => {
+  try {
+    const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+    await exchangeToken(cred.user);
+  } catch (e) { showErr(e.message); }
+};
+</script>
+{% endif %}
+{% endblock %}

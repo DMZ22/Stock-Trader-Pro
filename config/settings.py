@@ -10,12 +10,33 @@ env = environ.Env(
     DJANGO_ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
     FINNHUB_RATE_LIMIT=(int, 60),
     ALPHA_VANTAGE_RATE_LIMIT=(int, 5),
+    REQUIRE_LOGIN=(bool, False),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-replace-in-production")
 DEBUG = env("DJANGO_DEBUG")
 ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
+
+# Trust proxy-forwarded HTTPS (for deployment behind nginx/cloudflare/etc)
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# CSRF - add production hosts via env
+CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h not in ("localhost", "127.0.0.1")]
+CSRF_TRUSTED_ORIGINS += ["http://localhost:8000", "http://127.0.0.1:8000",
+                          "http://localhost:8787", "http://127.0.0.1:8787"]
+
+# Production security headers (auto-enabled when DEBUG=False)
+if not DEBUG:
+    SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=True)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
+    X_FRAME_OPTIONS = "DENY"
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -28,6 +49,7 @@ INSTALLED_APPS = [
     "apps.predictor",
     "apps.signals",
     "apps.dashboard",
+    "apps.auth.apps.AuthConfig",
 ]
 
 MIDDLEWARE = [
@@ -39,6 +61,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.auth.middleware.FirebaseUserMiddleware",
+    "apps.auth.middleware.RequireLoginMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -53,6 +77,7 @@ TEMPLATES = [{
             "django.template.context_processors.request",
             "django.contrib.auth.context_processors.auth",
             "django.contrib.messages.context_processors.messages",
+            "apps.auth.context_processors.firebase",
         ],
     },
 }]
@@ -114,6 +139,18 @@ RATE_LIMITS = {
     "FINNHUB": env("FINNHUB_RATE_LIMIT"),
     "ALPHA_VANTAGE": env("ALPHA_VANTAGE_RATE_LIMIT"),
 }
+
+# -------------------------------------------------------------------------
+# Firebase Auth
+# -------------------------------------------------------------------------
+FIREBASE_CONFIG = {
+    "API_KEY": env("FIREBASE_API_KEY", default=""),
+    "AUTH_DOMAIN": env("FIREBASE_AUTH_DOMAIN", default=""),
+    "PROJECT_ID": env("FIREBASE_PROJECT_ID", default=""),
+    "APP_ID": env("FIREBASE_APP_ID", default=""),
+}
+FIREBASE_PROJECT_ID = FIREBASE_CONFIG["PROJECT_ID"]
+REQUIRE_LOGIN = env("REQUIRE_LOGIN")
 
 # Logging
 LOGGING = {

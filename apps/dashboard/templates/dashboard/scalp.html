@@ -2,7 +2,7 @@
 {% block title %}Live Scalp Signals · Stock Trader Pro{% endblock %}
 {% block content %}
 <h1>⚡ Live Scalp Signals</h1>
-<p class="subtitle">Automatic trade setups with entry, stop-loss, take-profit, and position sizing.</p>
+<p class="subtitle">Multi-timeframe confluence · Price action patterns · Market regime · Dynamic SL/TP</p>
 
 <div class="scalp-controls card">
   <div class="control-group">
@@ -19,19 +19,21 @@
   <div class="control-group">
     <label>Interval</label>
     <select id="interval-select">
-      <option value="1m">1 min</option>
-      <option value="5m" selected>5 min</option>
-      <option value="15m">15 min</option>
-      <option value="30m">30 min</option>
-      <option value="1h">1 hour</option>
+      <option value="1m">1m</option>
+      <option value="5m" selected>5m</option>
+      <option value="15m">15m</option>
+      <option value="30m">30m</option>
+      <option value="1h">1h</option>
+      <option value="1d">1d</option>
     </select>
   </div>
   <div class="control-group">
     <label>Period</label>
     <select id="period-select">
-      <option value="1d">1 day</option>
-      <option value="5d" selected>5 days</option>
-      <option value="1mo">1 month</option>
+      <option value="1d">1d</option>
+      <option value="5d" selected>5d</option>
+      <option value="1mo">1mo</option>
+      <option value="3mo">3mo</option>
     </select>
   </div>
   <div class="control-group">
@@ -39,22 +41,24 @@
     <input type="number" id="account-input" value="10000" min="100" step="100">
   </div>
   <div class="control-group">
-    <label>Risk per Trade (%)</label>
+    <label>Risk %</label>
     <input type="number" id="risk-input" value="1" min="0.1" max="5" step="0.1">
   </div>
   <div class="control-group">
-    <label>Auto-refresh</label>
+    <label>Refresh</label>
     <select id="refresh-select">
       <option value="0">Off</option>
-      <option value="30" selected>30 sec</option>
-      <option value="60">1 min</option>
-      <option value="300">5 min</option>
+      <option value="30" selected>30s</option>
+      <option value="60">1m</option>
+      <option value="300">5m</option>
     </select>
   </div>
-  <button id="run-btn" class="btn-primary">Run Signal</button>
+  <button id="run-btn" class="btn-primary">Run</button>
+  <button id="backtest-btn" class="btn-secondary">Backtest</button>
 </div>
 
 <div id="signal-container"></div>
+<div id="backtest-container"></div>
 <div id="last-update" class="last-update"></div>
 
 {% endblock %}
@@ -69,16 +73,13 @@ async function fetchSignal() {
   const account = document.getElementById("account-input").value;
   const risk = document.getElementById("risk-input").value;
   const container = document.getElementById("signal-container");
-  container.innerHTML = '<div class="loading">Fetching data and computing signal…</div>';
+  container.innerHTML = '<div class="loading">Fetching data, computing indicators, analyzing multi-timeframe confluence…</div>';
 
   try {
-    const url = `/api/scalp/${symbol}/?interval=${interval}&period=${period}&account=${account}&risk=${risk}`;
+    const url = `/api/scalp/${symbol}/?interval=${interval}&period=${period}&account=${account}&risk=${risk}&htf=1`;
     const r = await fetch(url);
     const j = await r.json();
-    if (!j.ok) {
-      container.innerHTML = `<div class="error-card">❌ ${j.error}</div>`;
-      return;
-    }
+    if (!j.ok) { container.innerHTML = `<div class="error-card">❌ ${j.error}</div>`; return; }
     renderSignal(j.signal);
     document.getElementById("last-update").textContent = `Updated: ${new Date().toLocaleTimeString()}`;
   } catch (e) {
@@ -86,10 +87,48 @@ async function fetchSignal() {
   }
 }
 
+async function fetchBacktest() {
+  const symbol = document.getElementById("symbol-input").value.trim().toUpperCase();
+  const interval = document.getElementById("interval-select").value;
+  const period = document.getElementById("period-select").value;
+  const container = document.getElementById("backtest-container");
+  container.innerHTML = '<div class="loading">Running backtest on historical bars…</div>';
+  try {
+    const r = await fetch(`/api/backtest/${symbol}/?interval=${interval}&period=${period}&bars=300`);
+    const j = await r.json();
+    if (!j.ok) { container.innerHTML = `<div class="error-card">❌ ${j.error}</div>`; return; }
+    renderBacktest(j);
+  } catch (e) {
+    container.innerHTML = `<div class="error-card">❌ ${e.message}</div>`;
+  }
+}
+
 function renderSignal(s) {
-  const dirClass = s.direction === "LONG" ? "long" : s.direction === "SHORT" ? "short" : "neutral";
-  const actionClass = s.action === "TRADE" ? "trade" : s.action === "WATCH" ? "watch" : "wait";
+  const dirClass = s.direction.toLowerCase();
+  const actionClass = s.action.toLowerCase();
   const ps = s.position_size_hint;
+  const ind = s.indicators;
+  const patterns = s.patterns || {bullish:[],bearish:[],neutral:[]};
+  const regime = s.regime || {};
+  const levels = s.levels || {};
+  const htf = s.htf_trend;
+
+  const patternsHtml = [
+    ...patterns.bullish.map(p => `<span class="chip chip-bull">🟢 ${p}</span>`),
+    ...patterns.bearish.map(p => `<span class="chip chip-bear">🔴 ${p}</span>`),
+    ...patterns.neutral.map(p => `<span class="chip chip-neutral">⚪ ${p}</span>`),
+  ].join('') || '<span class="chip chip-neutral">No patterns detected</span>';
+
+  const levelsHtml = levels.nearest_support || levels.nearest_resistance ? `
+    <div class="levels-grid">
+      <div><span>Next Resistance</span><b>${levels.nearest_resistance ?? '—'}</b></div>
+      <div><span>Next Support</span><b>${levels.nearest_support ?? '—'}</b></div>
+      <div><span>Resistance Zones</span><b>${(levels.resistance||[]).slice(0,3).join(' · ') || '—'}</b></div>
+      <div><span>Support Zones</span><b>${(levels.support||[]).slice(0,3).join(' · ') || '—'}</b></div>
+    </div>` : '';
+
+  const htfHtml = htf ? `<span class="chip chip-${htf === 'UP' ? 'bull' : htf === 'DOWN' ? 'bear' : 'neutral'}">HTF: ${htf}</span>` : '';
+
   const html = `
   <div class="signal-main ${dirClass}">
     <div class="signal-header">
@@ -101,65 +140,105 @@ function renderSignal(s) {
         <span class="badge dir-${dirClass}">${s.direction}</span>
         <span class="badge action-${actionClass}">${s.action}</span>
         <span class="badge strength-${s.strength.toLowerCase()}">${s.strength}</span>
+        ${htfHtml}
       </div>
-      <div class="confidence-circle">
+      <div class="confidence-circle" style="--conf:${s.confidence}">
         <div class="conf-value">${s.confidence.toFixed(0)}</div>
         <div class="conf-label">Confidence</div>
       </div>
     </div>
 
     <div class="trade-levels">
-      <div class="level">
-        <div class="level-label">Entry</div>
-        <div class="level-value">${s.entry}</div>
-      </div>
-      <div class="level stop">
-        <div class="level-label">Stop Loss</div>
-        <div class="level-value">${s.stop_loss}</div>
-        <div class="level-sub">-${s.risk_pct}%</div>
-      </div>
-      <div class="level target">
-        <div class="level-label">Take Profit</div>
-        <div class="level-value">${s.take_profit}</div>
-        <div class="level-sub">+${s.reward_pct}%</div>
-      </div>
-      <div class="level">
-        <div class="level-label">Risk/Reward</div>
-        <div class="level-value">${s.risk_reward}:1</div>
-      </div>
+      <div class="level"><div class="level-label">Entry</div><div class="level-value">${s.entry}</div></div>
+      <div class="level stop"><div class="level-label">Stop Loss</div><div class="level-value">${s.stop_loss}</div><div class="level-sub">-${s.risk_pct}%</div></div>
+      <div class="level target"><div class="level-label">Take Profit</div><div class="level-value">${s.take_profit}</div><div class="level-sub">+${s.reward_pct}%</div></div>
+      <div class="level"><div class="level-label">Risk/Reward</div><div class="level-value">${s.risk_reward}:1</div></div>
     </div>
 
     ${ps ? `
     <div class="position-sizing">
-      <h4>💰 Position Sizing (${ps.risk_per_trade_pct}% risk on $${ps.account})</h4>
+      <h4>💰 Position Sizing · ${ps.risk_per_trade_pct}% risk on $${ps.account}</h4>
       <div class="ps-grid">
-        <div><span>Shares:</span> <b>${ps.shares}</b></div>
-        <div><span>Position Value:</span> <b>$${ps.position_value}</b></div>
-        <div><span>Max Loss:</span> <b>$${ps.dollar_risk}</b></div>
+        <div><span>Shares/Units</span><b>${ps.shares}</b></div>
+        <div><span>Position Value</span><b>$${ps.position_value.toLocaleString()}</b></div>
+        <div><span>Max Loss</span><b>$${ps.dollar_risk.toLocaleString()}</b></div>
+        <div><span>Potential Profit</span><b>$${(ps.dollar_risk * s.risk_reward).toFixed(0)}</b></div>
       </div>
     </div>` : ''}
 
-    <div class="indicators-grid">
-      <div><span>Price</span><b>${s.indicators.price}</b></div>
-      <div><span>EMA-9</span><b>${s.indicators.ema_9}</b></div>
-      <div><span>EMA-21</span><b>${s.indicators.ema_21}</b></div>
-      <div><span>VWAP</span><b>${s.indicators.vwap}</b></div>
-      <div><span>RSI(14)</span><b>${s.indicators.rsi}</b></div>
-      <div><span>MACD Hist</span><b>${s.indicators.macd_hist}</b></div>
-      <div><span>ADX</span><b>${s.indicators.adx}</b></div>
-      <div><span>ATR</span><b>${s.indicators.atr}</b></div>
-      <div><span>Stoch K/D</span><b>${s.indicators.stoch_k}/${s.indicators.stoch_d}</b></div>
-      <div><span>Vol Ratio</span><b>${s.indicators.volume_ratio}x</b></div>
-      <div><span>BB %B</span><b>${s.indicators.bb_percent_b}</b></div>
-      <div><span>Supertrend</span><b>${s.indicators.supertrend_dir === 1 ? '↑ UP' : '↓ DOWN'}</b></div>
+    <div class="context-row">
+      <div class="context-box">
+        <h4>📈 Market Regime</h4>
+        <div class="regime-${(regime.regime||'').toLowerCase()}">
+          <div class="regime-name">${regime.regime || 'N/A'}</div>
+          <div class="regime-desc">${regime.description || ''}</div>
+          <div class="regime-stats">
+            ADX: <b>${regime.adx}</b> · BB Width: <b>${regime.bb_width}</b> · Vol: <b>${regime.volatility}</b>
+          </div>
+        </div>
+      </div>
+      <div class="context-box">
+        <h4>🕯 Price Action Patterns</h4>
+        <div class="patterns-chips">${patternsHtml}</div>
+      </div>
+    </div>
+
+    ${levelsHtml ? `<div class="context-box"><h4>🎯 Support / Resistance</h4>${levelsHtml}</div>` : ''}
+
+    <div class="indicators-section">
+      <h4>🔬 All Indicators (raw values)</h4>
+      <div class="indicators-grid">
+        <div title="Simple price"><span>Price</span><b>${ind.price}</b></div>
+        <div title="9-period Exponential Moving Average — fast trend"><span>EMA-9</span><b>${ind.ema_9}</b></div>
+        <div title="21-period EMA — medium trend"><span>EMA-21</span><b>${ind.ema_21}</b></div>
+        <div title="50-period Simple Moving Average — long trend"><span>SMA-50</span><b>${ind.sma_50}</b></div>
+        <div title="Volume Weighted Average Price — institutional fair value"><span>VWAP</span><b>${ind.vwap}</b></div>
+        <div title="Relative Strength Index (14) — 0-100, &lt;30 oversold, &gt;70 overbought"><span>RSI(14)</span><b class="${ind.rsi<30?'oversold':ind.rsi>70?'overbought':''}">${ind.rsi}</b></div>
+        <div title="MACD line (12,26)"><span>MACD</span><b>${ind.macd}</b></div>
+        <div title="MACD 9-period signal line"><span>MACD Signal</span><b>${ind.macd_signal}</b></div>
+        <div title="MACD - Signal (momentum)"><span>MACD Hist</span><b>${ind.macd_hist}</b></div>
+        <div title="Average Directional Index — trend strength"><span>ADX(14)</span><b>${ind.adx}</b></div>
+        <div title="Positive Directional Indicator"><span>+DI</span><b>${ind.di_plus}</b></div>
+        <div title="Negative Directional Indicator"><span>-DI</span><b>${ind.di_minus}</b></div>
+        <div title="Average True Range — volatility in absolute terms"><span>ATR(14)</span><b>${ind.atr}</b></div>
+        <div title="ATR as % of price — volatility normalized"><span>ATR %</span><b>${ind.atr_pct}%</b></div>
+        <div title="Stochastic %K — oscillator"><span>Stoch %K</span><b>${ind.stoch_k}</b></div>
+        <div title="Stochastic %D — signal line"><span>Stoch %D</span><b>${ind.stoch_d}</b></div>
+        <div title="Williams %R — -100 to 0"><span>Williams %R</span><b>${ind.williams_r}</b></div>
+        <div title="Commodity Channel Index"><span>CCI(20)</span><b>${ind.cci}</b></div>
+        <div title="Money Flow Index — volume-weighted RSI"><span>MFI(14)</span><b>${ind.mfi}</b></div>
+        <div title="Chaikin Money Flow — accumulation/distribution"><span>CMF(20)</span><b>${ind.cmf}</b></div>
+        <div title="Volume vs 20-period average"><span>Vol Ratio</span><b>${ind.volume_ratio}x</b></div>
+        <div title="Bollinger %B — 0=lower band, 1=upper band"><span>BB %B</span><b>${ind.bb_percent_b}</b></div>
+        <div title="Supertrend direction"><span>Supertrend</span><b>${ind.supertrend_dir === 1 ? '↑ UP' : '↓ DOWN'}</b></div>
+        <div title="Composite long score from 8 factors"><span>Long Score</span><b>${ind.long_score}</b></div>
+        <div title="Composite short score from 8 factors"><span>Short Score</span><b>${ind.short_score}</b></div>
+      </div>
     </div>
 
     <div class="reasons">
-      <h4>📋 Reasoning</h4>
+      <h4>📋 Reasoning (${s.reasons.length} factors)</h4>
       <ul>${s.reasons.map(r => `<li>${r}</li>`).join('')}</ul>
     </div>
   </div>`;
   document.getElementById("signal-container").innerHTML = html;
+}
+
+function renderBacktest(r) {
+  const wr = r.hit_rate;
+  const wrClass = wr >= 60 ? 'good' : wr >= 45 ? 'ok' : 'bad';
+  document.getElementById("backtest-container").innerHTML = `
+    <div class="card backtest-card">
+      <h3>📊 Backtest: ${r.symbol} ${r.interval} (${r.lookback_bars} bars)</h3>
+      <div class="bt-stats">
+        <div><span>Signals</span><b>${r.total}</b></div>
+        <div><span>Wins</span><b class="win">${r.wins}</b></div>
+        <div><span>Losses</span><b class="loss">${r.losses}</b></div>
+        <div><span>Hit Rate</span><b class="${wrClass}">${r.hit_rate}%</b></div>
+        <div><span>Expected (2:1 R/R)</span><b>${r.hit_rate >= 33.3 ? 'Profitable ✓' : 'Unprofitable ✗'}</b></div>
+      </div>
+      <p class="bt-note">At 2:1 risk-reward, breakeven hit rate = 33.3%. A ${r.hit_rate}% hit rate yields ${((r.hit_rate * 2 - (100 - r.hit_rate)) / 100).toFixed(2)}R per trade on average.</p>
+    </div>`;
 }
 
 function setupRefresh() {
@@ -169,10 +248,10 @@ function setupRefresh() {
 }
 
 document.getElementById("run-btn").addEventListener("click", () => { fetchSignal(); setupRefresh(); });
+document.getElementById("backtest-btn").addEventListener("click", fetchBacktest);
 document.getElementById("refresh-select").addEventListener("change", setupRefresh);
 document.getElementById("symbol-input").addEventListener("keydown", e => { if (e.key === "Enter") { fetchSignal(); setupRefresh(); } });
 
-// Initial run
 fetchSignal();
 setupRefresh();
 </script>

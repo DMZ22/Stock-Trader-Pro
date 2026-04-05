@@ -14,6 +14,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from .providers import (
     MarketDataProvider, ProviderError, RateLimitError, DataNotFoundError,
     YFinanceProvider, FinnhubProvider, AlphaVantageProvider, TwelveDataProvider,
+    CoinGeckoProvider,
 )
 from .providers.base import Quote
 from .rate_limiter import REGISTRY
@@ -22,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 # Provider priority: best data quality → fallback
-DEFAULT_PROVIDER_ORDER = ["finnhub", "twelve_data", "alpha_vantage", "yfinance"]
+# CoinGecko tried first for crypto symbols; quickly rejects non-crypto
+DEFAULT_PROVIDER_ORDER = ["coingecko", "finnhub", "twelve_data", "alpha_vantage", "yfinance"]
 
 # Cache TTLs (seconds)
 QUOTE_TTL = 30
@@ -41,6 +43,7 @@ class MarketDataService:
     def _build_providers(self) -> List[MarketDataProvider]:
         api_keys = settings.API_KEYS
         candidates = {
+            "coingecko": lambda: CoinGeckoProvider(),
             "finnhub": lambda: FinnhubProvider(api_keys.get("FINNHUB")),
             "twelve_data": lambda: TwelveDataProvider(api_keys.get("TWELVE_DATA")),
             "alpha_vantage": lambda: AlphaVantageProvider(api_keys.get("ALPHA_VANTAGE")),

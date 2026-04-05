@@ -8,7 +8,18 @@ from apps.market.services import get_market_service
 from apps.market.providers.base import ProviderError, DataNotFoundError
 from apps.market.indicators import add_indicators
 from apps.market.assets import ASSET_CATEGORIES, find_symbol
-from apps.signals.scalper import detect_scalp
+from apps.signals.scalper import detect_scalp, backtest_signals
+
+
+# Map low TF to higher TF for multi-timeframe confluence
+HTF_MAP = {
+    "1m": ("15m", "5d"),
+    "5m": ("1h", "1mo"),
+    "15m": ("1h", "1mo"),
+    "30m": ("4h", "3mo") if False else ("1h", "1mo"),
+    "1h": ("1d", "6mo"),
+    "1d": ("1wk", "2y"),
+}
 from apps.signals.sentiment import fetch_news, analyze_sentiment
 from apps.signals.composite import combine
 
@@ -21,10 +32,37 @@ def _error(message, status=400):
 
 @require_GET
 def health_api(request):
+    """Detailed health check: provider status + cache + version."""
+    import time
     svc = get_market_service()
+    checks = {}
+    # Test each provider with a lightweight call
+    for p in svc.providers:
+        try:
+            t0 = time.time()
+            if p.name == "coingecko":
+                # CoinGecko doesn't support non-crypto; skip live test
+                checks[p.name] = {"status": "available", "requires_key": p.requires_key}
+            else:
+                # Just check availability, don't make network call
+                checks[p.name] = {"status": "configured" if p.is_available() else "unavailable",
+                                  "requires_key": p.requires_key}
+        except Exception as e:
+            checks[p.name] = {"status": "error", "error": str(e)}
+    # Cache check
+    from django.core.cache import cache
+    try:
+        cache.set("health_ping", "ok", 10)
+        cache_ok = cache.get("health_ping") == "ok"
+    except Exception:
+        cache_ok = False
     return JsonResponse({
         "ok": True,
-        "providers": [p.name for p in svc.providers],
+        "version": "1.1.0",
+        "providers": checks,
+        "provider_order": [p.name for p in svc.providers],
+        "cache": "ok" if cache_ok else "error",
+        "firebase_configured": bool(__import__("django.conf").conf.settings.FIREBASE_CONFIG.get("API_KEY")),
     })
 
 
@@ -95,11 +133,23 @@ def scalp_api(request, symbol):
     period = request.GET.get("period", "5d")
     account = float(request.GET.get("account", 10000))
     risk_pct = float(request.GET.get("risk", 1.0))
+    use_htf = request.GET.get("htf", "1") == "1"
     try:
-        df = get_market_service().get_candles(symbol, interval, period)
+        svc = get_market_service()
+        df = svc.get_candles(symbol, interval, period)
         df_ind = add_indicators(df)
+        # Fetch higher-timeframe for confluence
+        htf_ind = None
+        if use_htf and interval in HTF_MAP:
+            htf_interval, htf_period = HTF_MAP[interval]
+            try:
+                htf_df = svc.get_candles(symbol, htf_interval, htf_period)
+                htf_ind = add_indicators(htf_df)
+            except Exception as e:
+                logger.info("HTF fetch failed (non-critical): %s", e)
         sig = detect_scalp(df_ind, symbol.upper(),
-                           account_size=account, risk_per_trade_pct=risk_pct)
+                           account_size=account, risk_per_trade_pct=risk_pct,
+                           htf_df=htf_ind)
         return JsonResponse({"ok": True, "signal": sig.to_dict()})
     except DataNotFoundError as e:
         return _error(str(e), 404)
@@ -120,7 +170,16 @@ def analyze_api(request, symbol):
         df = svc.get_candles(symbol, interval, period)
         profile = svc.get_profile(symbol)
         df_ind = add_indicators(df)
-        scalp = detect_scalp(df_ind, symbol.upper())
+        # Multi-timeframe trend filter
+        htf_ind = None
+        if interval in HTF_MAP:
+            htf_interval, htf_period = HTF_MAP[interval]
+            try:
+                htf_df_raw = svc.get_candles(symbol, htf_interval, htf_period)
+                htf_ind = add_indicators(htf_df_raw)
+            except Exception:
+                pass
+        scalp = detect_scalp(df_ind, symbol.upper(), htf_df=htf_ind)
         articles = fetch_news(symbol.upper(), profile.get("name", ""))
         sentiment = analyze_sentiment(articles)
         current_price = float(df["Close"].iloc[-1])
@@ -159,4 +218,25 @@ def analyze_api(request, symbol):
         return _error(str(e), 502)
     except Exception as e:
         logger.exception("analyze_api")
+        return _error(str(e), 500)
+
+
+@require_GET
+def backtest_api(request, symbol):
+    """Backtest scalp signals over recent bars to show historical accuracy."""
+    interval = request.GET.get("interval", "5m")
+    period = request.GET.get("period", "1mo")
+    bars = int(request.GET.get("bars", 200))
+    try:
+        df = get_market_service().get_candles(symbol, interval, period)
+        df_ind = add_indicators(df)
+        result = backtest_signals(df_ind, symbol.upper(), lookback_bars=bars)
+        return JsonResponse({"ok": True, "symbol": symbol.upper(),
+                             "interval": interval, "period": period, **result})
+    except DataNotFoundError as e:
+        return _error(str(e), 404)
+    except ProviderError as e:
+        return _error(str(e), 502)
+    except Exception as e:
+        logger.exception("backtest_api")
         return _error(str(e), 500)

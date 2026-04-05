@@ -16,8 +16,18 @@
     <div class="nav-links">
       <a href="{% url 'dashboard:index' %}">Home</a>
       <a href="{% url 'dashboard:scalp' %}">Scalp Signals</a>
-      <a href="{% url 'dashboard:analyze' %}?symbol=AAPL">Full Analysis</a>
-      <a href="/api/health/" target="_blank">API Health</a>
+      <a href="{% url 'dashboard:analyze' %}?symbol=AAPL">Analysis</a>
+      <a href="/api/health/" target="_blank">API</a>
+      {% if firebase_user.authenticated %}
+        <span class="user-badge">
+          {% if firebase_user.picture %}<img src="{{ firebase_user.picture }}" alt="" style="width:24px;height:24px;border-radius:50%;">{% endif %}
+          {{ firebase_user.email|default:firebase_user.name }}
+          <a href="{% url 'firebase_auth:logout' %}">Logout</a>
+        </span>
+      {% elif firebase_configured %}
+        <a href="{% url 'firebase_auth:login' %}">Login</a>
+        <a href="{% url 'firebase_auth:signup' %}">Sign Up</a>
+      {% endif %}
     </div>
   </nav>
   <main class="container">
