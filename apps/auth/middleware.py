@@ -26,8 +26,7 @@ class FirebaseUserMiddleware:
 class RequireLoginMiddleware:
     """Redirects unauthenticated users to /auth/login/ for protected paths."""
 
-    PUBLIC_PATHS = ("/auth/login/", "/auth/signup/", "/auth/session/",
-                     "/auth/master/", "/static/", "/api/health/", "/admin/")
+    PUBLIC_PATHS = ("/auth/", "/static/", "/api/", "/admin/")
 
     def __init__(self, get_response):
         self.get_response = get_response
