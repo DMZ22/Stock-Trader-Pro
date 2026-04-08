@@ -18,13 +18,12 @@ environ.Env.read_env(BASE_DIR / ".env")
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-replace-in-production")
 DEBUG = env("DJANGO_DEBUG")
-ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
-# On Render (RENDER=true env var), allow all .onrender.com subdomains
 import os
-if os.environ.get("RENDER"):
+if os.environ.get("RENDER") or not env("DJANGO_DEBUG"):
+    # On Render or production: accept all hosts (edge proxy validates)
     ALLOWED_HOSTS = ["*"]
-elif not any(h.endswith(".onrender.com") for h in ALLOWED_HOSTS):
-    ALLOWED_HOSTS.append(".onrender.com")
+else:
+    ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
 
 # Trust proxy-forwarded HTTPS (for deployment behind nginx/cloudflare/etc)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
