@@ -4,10 +4,20 @@ Bidirectional LSTM price predictor.
 Uses a curated feature set (OHLCV + key indicators) and separate scalers
 for features and target. Supports multi-step recursive forecasting and
 computes proper out-of-sample metrics.
+
+NOTE: TensorFlow is an optional dependency. If not installed, the predictor
+gracefully disables itself. The rest of the app (scalp signals, scanner,
+forecast, etc.) works without it.
 """
 import logging
 import numpy as np
 import pandas as pd
+
+try:
+    import tensorflow  # noqa: F401
+    TF_AVAILABLE = True
+except ImportError:
+    TF_AVAILABLE = False
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, r2_score
 
@@ -78,6 +88,8 @@ class LSTMPredictor:
 
     # ------------------------------------------------------------------
     def build(self, input_shape):
+        if not TF_AVAILABLE:
+            raise RuntimeError("TensorFlow not installed. Install with: pip install tensorflow")
         from tensorflow.keras.models import Sequential
         from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, Input
         from tensorflow.keras.optimizers import Adam

@@ -19,6 +19,11 @@ environ.Env.read_env(BASE_DIR / ".env")
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-replace-in-production")
 DEBUG = env("DJANGO_DEBUG")
 ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
+# Always allow Render's onrender.com domain
+if any(h.endswith(".onrender.com") for h in ALLOWED_HOSTS):
+    pass
+else:
+    ALLOWED_HOSTS.append(".onrender.com")
 
 # Trust proxy-forwarded HTTPS (for deployment behind nginx/cloudflare/etc)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
