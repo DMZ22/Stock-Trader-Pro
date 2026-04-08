@@ -30,7 +30,7 @@ CSRF_TRUSTED_ORIGINS += ["http://localhost:8000", "http://127.0.0.1:8000",
 
 # Production security headers (auto-enabled when DEBUG=False)
 if not DEBUG:
-    SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=True)
+    SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=False)
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 31536000
@@ -121,7 +121,11 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -175,15 +179,10 @@ LOGGING = {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
-        "file": {
-            "class": "logging.FileHandler",
-            "filename": BASE_DIR / "logs" / "app.log",
-            "formatter": "verbose",
-        },
     },
-    "root": {"handlers": ["console", "file"], "level": "INFO"},
+    "root": {"handlers": ["console"], "level": "INFO"},
     "loggers": {
-        "apps": {"handlers": ["console", "file"], "level": "DEBUG", "propagate": False},
+        "apps": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
         "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
