@@ -19,19 +19,24 @@ environ.Env.read_env(BASE_DIR / ".env")
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-replace-in-production")
 DEBUG = env("DJANGO_DEBUG")
 ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
-# Always allow Render's onrender.com domain
-if any(h.endswith(".onrender.com") for h in ALLOWED_HOSTS):
-    pass
-else:
+# On Render (RENDER=true env var), allow all .onrender.com subdomains
+import os
+if os.environ.get("RENDER"):
+    ALLOWED_HOSTS = ["*"]
+elif not any(h.endswith(".onrender.com") for h in ALLOWED_HOSTS):
     ALLOWED_HOSTS.append(".onrender.com")
 
 # Trust proxy-forwarded HTTPS (for deployment behind nginx/cloudflare/etc)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # CSRF - add production hosts via env
-CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h not in ("localhost", "127.0.0.1")]
-CSRF_TRUSTED_ORIGINS += ["http://localhost:8000", "http://127.0.0.1:8000",
-                          "http://localhost:8787", "http://127.0.0.1:8787"]
+CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h not in ("localhost", "127.0.0.1", "*")]
+CSRF_TRUSTED_ORIGINS += [
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://localhost:8787", "http://127.0.0.1:8787",
+    "https://stock-trader-pro.onrender.com",
+    "https://*.onrender.com",
+]
 
 # Production security headers (auto-enabled when DEBUG=False)
 if not DEBUG:
