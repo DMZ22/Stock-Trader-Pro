@@ -14,7 +14,9 @@ env = environ.Env(
     MASTER_EMAIL=(str, "dev22ashish@gmail.com"),
     SESSION_HOURS=(int, 48),
 )
-environ.Env.read_env(BASE_DIR / ".env")
+env_file = BASE_DIR / ".env"
+if env_file.is_file():
+    environ.Env.read_env(env_file)
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-replace-in-production")
 DEBUG = env("DJANGO_DEBUG")
