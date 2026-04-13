@@ -106,6 +106,35 @@ def session_login(request):
 
 
 
+@csrf_exempt
+@require_POST
+def direct_login(request):
+    """Simple email login when Firebase is not configured."""
+    try:
+        data = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
+    email = (data.get("email") or "").lower().strip()
+    password = data.get("password", "")
+    if not email:
+        return JsonResponse({"ok": False, "error": "Email required"}, status=400)
+    # Check if user exists
+    profile = UserProfile.objects.filter(email=email).first()
+    if profile:
+        # Existing user — just log them in
+        _create_session(request, uid=profile.uid, email=email,
+                        name=profile.name, picture=profile.picture,
+                        provider="direct")
+        return JsonResponse({"ok": True, "uid": profile.uid, "email": email})
+    # New user — create account
+    if not password:
+        return JsonResponse({"ok": False, "error": "Password required for new accounts"}, status=400)
+    uid = f"direct:{email}"
+    _create_session(request, uid=uid, email=email, name=email.split("@")[0],
+                    provider="direct")
+    return JsonResponse({"ok": True, "uid": uid, "email": email, "created": True})
+
+
 @require_http_methods(["GET", "POST"])
 def logout_view(request):
     request.session.flush()
