@@ -1,8 +1,13 @@
 # Stock Trader Pro v1.1
 
-**Live Demo:** [https://graves-clarify-freeness.ngrok-free.dev](https://graves-clarify-freeness.ngrok-free.dev)
-
 Production Django trading dashboard with scalp trade signals, multi-timeframe confluence, price action patterns, market regime detection, 20+ technical indicators, LSTM forecasting, news sentiment, backtesting, and Firebase authentication.
+
+## View Project
+
+| | Link |
+|---|---|
+| **Live Demo** | [https://graves-clarify-freeness.ngrok-free.dev](https://graves-clarify-freeness.ngrok-free.dev) |
+| **GitHub** | [https://github.com/DMZ22/Stock-Trader-Pro](https://github.com/DMZ22/Stock-Trader-Pro) |
 
 ## What's New in v1.1
 
