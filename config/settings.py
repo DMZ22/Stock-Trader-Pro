@@ -20,7 +20,7 @@ if env_file.is_file():
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-replace-in-production")
 DEBUG = env("DJANGO_DEBUG")
-ALLOWED_HOSTS = ["*"]  # Safe: Django runs behind reverse proxy in production
+ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
     "django.contrib.admin",

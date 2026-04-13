@@ -63,7 +63,6 @@ def login_page(request):
     return render(request, "dashboard/login.html", {
         "firebase_config": _firebase_config(request),
         "next": request.GET.get("next", "/"),
-        "master_email": settings.MASTER_EMAIL,
     })
 
 
@@ -105,23 +104,6 @@ def session_login(request):
         "is_master": _is_master(claims.get("email", "")),
     })
 
-
-@require_GET
-def master_login(request):
-    """
-    Master bypass login. Creates a session directly for MASTER_EMAIL
-    without requiring Firebase. Only works for the configured master email.
-    This is meant for the app owner's personal access.
-    """
-    email = settings.MASTER_EMAIL
-    if not email:
-        return HttpResponseRedirect(reverse("firebase_auth:login"))
-    # Generate a deterministic uid based on master email
-    uid = f"master:{email}"
-    _create_session(request, uid=uid, email=email, name="Master",
-                     picture="", provider="master")
-    next_url = request.GET.get("next", "/")
-    return HttpResponseRedirect(next_url)
 
 
 @require_http_methods(["GET", "POST"])
