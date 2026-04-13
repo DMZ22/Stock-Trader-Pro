@@ -20,36 +20,7 @@ if env_file.is_file():
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-key-replace-in-production")
 DEBUG = env("DJANGO_DEBUG")
-import os
-if os.environ.get("RENDER") or not env("DJANGO_DEBUG"):
-    # On Render or production: accept all hosts (edge proxy validates)
-    ALLOWED_HOSTS = ["*"]
-else:
-    ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
-
-# Trust proxy-forwarded HTTPS (for deployment behind nginx/cloudflare/etc)
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-
-# CSRF - add production hosts via env
-CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h not in ("localhost", "127.0.0.1", "*")]
-CSRF_TRUSTED_ORIGINS += [
-    "http://localhost:8000", "http://127.0.0.1:8000",
-    "http://localhost:8787", "http://127.0.0.1:8787",
-    "https://stock-trader-pro.onrender.com",
-    "https://*.onrender.com",
-]
-
-# Production security headers (auto-enabled when DEBUG=False)
-if not DEBUG:
-    SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=False)
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_HSTS_SECONDS = 31536000
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_BROWSER_XSS_FILTER = True
-    X_FRAME_OPTIONS = "DENY"
+ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -67,7 +38,6 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -132,12 +102,6 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STORAGES = {
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
-    },
-}
-
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # -------------------------------------------------------------------------
